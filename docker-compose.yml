@@ -1,0 +1,113 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL 16
+  postgres:
+    image: postgres:16-alpine
+    container_name: shopstream-postgres
+    environment:
+      POSTGRES_DB: shopstream
+      POSTGRES_USER: shopstream
+      POSTGRES_PASSWORD: shopstream123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shopstream -d shopstream"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - shopstream-network
+
+  # 2. Redis 7
+  redis:
+    image: redis:7-alpine
+    container_name: shopstream-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - shopstream-network
+
+  # 3. Elasticsearch 8
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    container_name: shopstream-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - shopstream-network
+
+  # 4. Spring Boot Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: shopstream-backend
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/shopstream
+      - SPRING_DATASOURCE_USERNAME=shopstream
+      - SPRING_DATASOURCE_PASSWORD=shopstream123
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ELASTICSEARCH_URIS=http://elasticsearch:9200
+      - STRIPE_API_KEY=${STRIPE_API_KEY:-sk_test_mock_shopstream_key}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_mock_shopstream_secret}
+      - STRIPE_MOCK_MODE=${STRIPE_MOCK_MODE:-true}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - CORS_ALLOWED_ORIGINS=http://localhost:3000,http://frontend:3000
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - shopstream-network
+
+  # 5. Next.js Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: shopstream-frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8080/api/v1
+      - NEXT_PUBLIC_BACKEND_URL=http://backend:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - shopstream-network
+
+networks:
+  shopstream-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  es_data:

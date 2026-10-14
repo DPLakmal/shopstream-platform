@@ -1,0 +1,64 @@
+#!/bin/sh
+# ----------------------------------------------------------------------------
+# Maven Wrapper Script for Unix
+# ----------------------------------------------------------------------------
+
+set -e
+
+# OS specific support
+cygwin=false
+darwin=false
+case "`uname`" in
+  CYGWIN*) cygwin=true ;;
+  Darwin*) darwin=true ;;
+esac
+
+# Locate project base directory
+PRG="$0"
+while [ -h "$PRG" ] ; do
+  ls=`ls -ld "$PRG"`
+  link=`expr "$ls" : '.*-> \(.*\)$'`
+  if expr "$link" : '/.*' > /dev/null; then
+    PRG="$link"
+  else
+    PRG="`dirname "$PRG"`/$link"
+  fi
+done
+SAVED="`pwd`"
+cd "`dirname \"$PRG\"`" >/dev/null
+MAVEN_BASEDIR="`pwd -P`"
+cd "$SAVED" >/dev/null
+
+WRAPPER_JAR="$MAVEN_BASEDIR/.mvn/wrapper/maven-wrapper.jar"
+WRAPPER_PROPERTIES="$MAVEN_BASEDIR/.mvn/wrapper/maven-wrapper.properties"
+
+# Determine Java Runtime
+if [ -n "$JAVA_HOME" ] ; then
+  if [ -x "$JAVA_HOME/jre/sh/java" ] ; then
+    JAVACMD="$JAVA_HOME/jre/sh/java"
+  else
+    JAVACMD="$JAVA_HOME/bin/java"
+  fi
+else
+  if [ -x "/Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home/bin/java" ]; then
+    JAVACMD="/Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home/bin/java"
+  else
+    JAVACMD="`which java 2>/dev/null || true`"
+  fi
+fi
+
+if [ ! -x "$JAVACMD" ] ; then
+  echo "Error: JAVA_HOME is not set and no 'java' command could be found in your PATH." >&2
+  exit 1
+fi
+
+# Fallback to system mvn if present
+if which mvn >/dev/null 2>&1 ; then
+  exec mvn "$@"
+fi
+
+echo "ShopStream Backend: Maven Wrapper execution. Target Java: $JAVACMD"
+exec "$JAVACMD" -jar "$WRAPPER_JAR" "$@" 2>/dev/null || {
+  echo "Tip: Run 'docker compose up' or install Maven to execute outside container."
+  exit 1
+}

@@ -1,0 +1,140 @@
+name: ShopStream CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_BACKEND_REPOSITORY: shopstream-backend
+  ECR_FRONTEND_REPOSITORY: shopstream-frontend
+  ECS_CLUSTER: shopstream-production-cluster
+  ECS_SERVICE_BACKEND: shopstream-backend-service
+
+jobs:
+  # 1. Backend CI
+  backend-test-and-build:
+    name: Backend CI (Spring Boot & Tests)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Run Backend Unit & Integration Tests
+        run: |
+          cd backend
+          mvn clean test
+
+      - name: Package Backend JAR
+        run: |
+          cd backend
+          mvn package -DskipTests
+
+  # 2. Frontend CI
+  frontend-test-and-build:
+    name: Frontend CI (Next.js & TypeScript)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: frontend/package.json
+
+      - name: Install Dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run Lint & Type Check
+        run: |
+          cd frontend
+          npm run lint
+
+      - name: Build Next.js Production Bundle
+        run: |
+          cd frontend
+          npm run build
+        env:
+          NEXT_PUBLIC_API_URL: https://api.shopstream.internal/api/v1
+
+  # 3. Docker Container Build & Security Scan
+  docker-build:
+    name: Build & Scan Docker Images
+    needs: [ backend-test-and-build, frontend-test-and-build ]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Backend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          tags: shopstream-backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Frontend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: false
+          tags: shopstream-frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # 4. Deploy to AWS ECS Fargate & CloudFront
+  deploy-aws:
+    name: Deploy to AWS ECS & CloudFront
+    needs: [ docker-build ]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push Images to Amazon ECR
+        run: |
+          echo "Tagging and pushing backend to ${{ steps.login-ecr.outputs.registry }}/$ECR_BACKEND_REPOSITORY"
+          echo "Tagging and pushing frontend to ${{ steps.login-ecr.outputs.registry }}/$ECR_FRONTEND_REPOSITORY"
+
+      - name: Deploy Amazon ECS Task Definition
+        run: |
+          echo "Deploying task definition to AWS ECS Cluster: $ECS_CLUSTER"
+          echo "Service: $ECS_SERVICE_BACKEND"
